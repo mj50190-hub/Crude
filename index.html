@@ -1094,9 +1094,9 @@ transition:background .12s ease;position:relative;
       <div style="text-align:center;margin-bottom:3px"><span id="combo-display" style="font-size:12px;font-weight:900;color:var(--red);opacity:0;transform:scale(0.8);transition:opacity .2s ease,transform .2s ease;display:inline-block"></span></div>
       <div class="hint" id="hint">Tap to select • Tap another to merge • Drag to move • Long-press to sell</div>
       <div class="act-row">
-        <button class="abtn g" id="bbtn" onclick="buyItem()"><span>+ Item</span><span class="bsub">💰 50</span></button>
-        <button class="abtn p" onclick="buyRare()"><span>Rare Item</span><span class="bsub">💎 5</span></button>
-        <button class="abtn b" onclick="watchAd()"><span>Watch Ad</span><span class="bsub">💎 +3</span></button>
+        <button class="abtn g" id="bbtn" onclick="buyItem(this)"><span>+ Item</span><span class="bsub">💰 50</span></button>
+        <button class="abtn p" id="rbtn-rare" onclick="buyRare(this)"><span>Rare Item</span><span class="bsub">💎 5</span></button>
+        <button class="abtn b" id="quest-btn-main" onclick="_showQuestModal()"><span>🏆 Quests</span><span class="bsub" id="quest-btn-sub">—</span></button>
       </div>
     </div>
   </div>
@@ -8635,6 +8635,185 @@ G.mines = {};
 G.mineOutputs = {};
 G.facActiveRecipe = {};
 setTimeout(()=>{_initDemandSystem();_initBuyers();},200);
+};
+})();
+
+// ══════════════════════════════════════════════════════════════════
+//  FIX PACK — Step-1 button, grid fill, spawn animation, ad→energy
+// ══════════════════════════════════════════════════════════════════
+
+// ── FIX 1: Ensure step1 button is always visually active ─────────
+(function(){
+const s=document.createElement(‘style’);
+s.textContent=`/* Step 1 button must always look active (never disabled look) */ #step1 .obtn:not([disabled]){ opacity:1!important;cursor:pointer!important; background:linear-gradient(180deg,#66bb6a,#388e3c)!important; box-shadow:0 6px 0 #1b5e20,0 8px 16px rgba(56,142,60,.3)!important; color:white!important; pointer-events:auto!important; } /* Grid fills all available vertical space */ .grid-wrap{display:flex;flex-direction:column;flex:1;min-height:0} .grid-panel{flex:1;min-height:0;display:flex;flex-direction:column} #grid{flex:1;min-height:0;align-content:stretch} #grid .cell{min-height:0} .ctrl-bar{flex-shrink:0} .grid-toolbar{flex-shrink:0}`;
+document.head.appendChild(s);
+})();
+
+// Force remove any stray disabled on step1 button when onboarding loads
+setTimeout(()=>{
+const s1btn = document.querySelector(’#step1 .obtn’);
+if(s1btn){ s1btn.removeAttribute(‘disabled’); s1btn.style.opacity=‘1’; s1btn.style.pointerEvents=‘auto’; }
+}, 500);
+
+// ── FIX 2: Spawn animation uses actual button as origin ──────────
+function _spawnFlyAnimation(emoji, gridSlot, sourceBtn){
+const destCell = document.querySelector(’#grid .cell[data-i=”’+gridSlot+’”]’);
+if(!destCell) return;
+const destRect = destCell.getBoundingClientRect();
+let srcX, srcY;
+if(sourceBtn){
+const sr = sourceBtn.getBoundingClientRect();
+srcX = sr.left + sr.width/2;
+srcY = sr.top + sr.height/2;
+} else {
+srcX = window.innerWidth/2;
+srcY = window.innerHeight*0.7;
+}
+const fly=document.createElement(‘div’);
+fly.style.cssText=`position:fixed;left:${srcX-18}px;top:${srcY-18}px;font-size:30px;z-index:5000;pointer-events:none;width:36px;height:36px;display:flex;align-items:center;justify-content:center;transition:left .55s cubic-bezier(.2,.8,.6,1),top .55s cubic-bezier(.25,.1,.25,1),transform .55s ease,opacity .55s ease;filter:drop-shadow(0 4px 6px rgba(0,0,0,.3))`;
+// Try to use PNG if available
+const cid = Object.entries(C||{}).find(([k,v])=>v.e===emoji)?.[0];
+const assetName = cid ? (COMMODITY_ASSETS||{})[cid] : null;
+if(assetName && ASSET_CACHE[assetName]===true){
+fly.innerHTML=’<img src="'+ASSET_DIR+assetName+'.png" style="width:100%;height:100%;object-fit:contain">’;
+} else {
+fly.textContent=emoji;
+}
+document.body.appendChild(fly);
+requestAnimationFrame(()=>requestAnimationFrame(()=>{
+fly.style.left=(destRect.left+destRect.width/2-18)+‘px’;
+fly.style.top=(destRect.top+destRect.height/2-18)+‘px’;
+fly.style.transform=‘scale(.65)’;
+fly.style.opacity=‘0’;
+}));
+setTimeout(()=>fly.remove(),600);
+}
+
+// Patch buyItem / buyRare to use the animation with the clicked button as origin
+(function(){
+const origBuyItem = buyItem;
+buyItem = function(btn){
+if(gridItemCount()>=GS){ origBuyItem(); return; }
+if(G.coins<50){ origBuyItem(); return; }
+// Remember slot before spawn
+const origAddG = addG;
+let spawnedSlot=-1, spawnedId=null;
+addG = function(id){
+const idx = G.grid.findIndex(c=>c===null);
+const result = origAddG(id);
+if(result){ spawnedSlot=idx; spawnedId=id; }
+return result;
+};
+origBuyItem();
+addG = origAddG;
+if(spawnedSlot>=0 && spawnedId && btn){
+_spawnFlyAnimation(C[spawnedId]?.e||‘✨’, spawnedSlot, btn);
+}
+};
+
+const origBuyRare = buyRare;
+buyRare = function(btn){
+if(G.energy<=0){
+// NEW: offer watch-ad-for-energy instead of just opening shop
+_showWatchAdForEnergyModal();
+return;
+}
+if(G.gems<5){ origBuyRare(); return; }
+if(gridItemCount()>=maxItems()){ origBuyRare(); return; }
+const origAddG = addG;
+let spawnedSlot=-1, spawnedId=null;
+addG = function(id){
+const idx = G.grid.findIndex(c=>c===null);
+const result = origAddG(id);
+if(result){ spawnedSlot=idx; spawnedId=id; }
+return result;
+};
+origBuyRare();
+addG = origAddG;
+if(spawnedSlot>=0 && spawnedId && btn){
+_spawnFlyAnimation(C[spawnedId]?.e||‘✨’, spawnedSlot, btn);
+}
+};
+})();
+
+// Also guard + Item spawn when no energy is needed — but show modal when blocked
+(function(){
+const origBuyItem = buyItem;
+buyItem = function(btn){
+if(G.coins<50){
+_showWatchAdForCoinsModal();
+return;
+}
+origBuyItem(btn);
+};
+})();
+
+// ── FIX 3: Ad watch offered contextually when blocked ────────────
+function _showWatchAdForEnergyModal(){
+const w=document.createElement(‘div’);
+w.style.cssText=‘position:fixed;inset:0;z-index:6000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);backdrop-filter:blur(6px)’;
+w.onclick=e=>{if(e.target===w)w.remove();};
+w.innerHTML=`<div style="background:linear-gradient(180deg,#fff4d6,#ffe0a8);border-radius:22px;padding:22px 20px;max-width:290px;width:88%;text-align:center;border:3px solid #b87d28;box-shadow:0 6px 0 #8a5a18,0 10px 30px rgba(0,0,0,.3);animation:popIn .3s cubic-bezier(.34,1.56,.64,1)">
+<div style="font-size:42px;margin-bottom:6px">⚡</div>
+<div style="font-family:var(--ff);font-size:15px;color:#3d2608;margin-bottom:4px">OUT OF ENERGY</div>
+<div style="font-size:10px;color:#8a5a18;font-family:var(--fb);margin-bottom:14px">Watch a short ad to get ⚡ +5 energy instantly!</div>
+<div style="display:flex;gap:8px">
+<button onclick="this.closest('[style*=fixed]').remove()" style="flex:1;padding:10px;border-radius:12px;border:2.5px solid #b87d28;background:white;color:#3d2608;font-family:var(--ff);font-size:11px;cursor:pointer">Wait</button>
+<button onclick="_watchAdForEnergy();this.closest('[style*=fixed]').remove()" style="flex:2;padding:10px;border-radius:12px;border:none;background:linear-gradient(180deg,#42a5f5,#1565c0);color:white;font-family:var(--ff);font-size:12px;cursor:pointer;box-shadow:0 4px 0 #0d47a1">📺 Watch Ad → ⚡+5</button>
+</div>
+
+  </div>`;
+  document.body.appendChild(w);
+}
+function _watchAdForEnergy(){
+  G.energy = Math.min(G.maxEnergy, G.energy+5);
+  updHUD(); save();
+  notif('levelup','⚡ +5 Energy! Thanks for watching.');
+  sLvl();
+}
+
+function _showWatchAdForCoinsModal(){
+const w=document.createElement(‘div’);
+w.style.cssText=‘position:fixed;inset:0;z-index:6000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);backdrop-filter:blur(6px)’;
+w.onclick=e=>{if(e.target===w)w.remove();};
+w.innerHTML=`<div style="background:linear-gradient(180deg,#fff4d6,#ffe0a8);border-radius:22px;padding:22px 20px;max-width:290px;width:88%;text-align:center;border:3px solid #b87d28;box-shadow:0 6px 0 #8a5a18,0 10px 30px rgba(0,0,0,.3);animation:popIn .3s cubic-bezier(.34,1.56,.64,1)">
+<div style="font-size:42px;margin-bottom:6px">💰</div>
+<div style="font-family:var(--ff);font-size:15px;color:#3d2608;margin-bottom:4px">NOT ENOUGH COINS</div>
+<div style="font-size:10px;color:#8a5a18;font-family:var(--fb);margin-bottom:14px">Watch a short ad to get 💰 +200 coins instantly!</div>
+<div style="display:flex;gap:8px">
+<button onclick="this.closest('[style*=fixed]').remove()" style="flex:1;padding:10px;border-radius:12px;border:2.5px solid #b87d28;background:white;color:#3d2608;font-family:var(--ff);font-size:11px;cursor:pointer">Wait</button>
+<button onclick="_watchAdForCoins();this.closest('[style*=fixed]').remove()" style="flex:2;padding:10px;border-radius:12px;border:none;background:linear-gradient(180deg,#66bb6a,#388e3c);color:white;font-family:var(--ff);font-size:12px;cursor:pointer;box-shadow:0 4px 0 #1b5e20">📺 Watch Ad → 💰+200</button>
+</div>
+
+  </div>`;
+  document.body.appendChild(w);
+}
+function _watchAdForCoins(){
+  G.coins += 200;
+  updHUD(); save();
+  notif('levelup','💰 +200 Coins! Thanks for watching.');
+  sLvl();
+}
+
+// ── FIX 4: Update Quest button subtitle with current quest progress ──
+function _updateQuestButtonSub(){
+const sub = document.getElementById(‘quest-btn-sub’);
+if(!sub) return;
+try{
+const q = getCurrentQuest();
+if(!q){ sub.textContent = ‘✓ Done’; return; }
+const prog = getQuestProgress(q);
+sub.textContent = Math.round(prog*100)+’%’;
+}catch(e){ sub.textContent = ‘—’; }
+}
+setInterval(_updateQuestButtonSub, 2000);
+setTimeout(_updateQuestButtonSub, 1500);
+// Also update after every save
+(function(){
+const origSave = save;
+save = function(){
+origSave();
+_updateQuestButtonSub();
 };
 })();
 
